@@ -5,7 +5,7 @@ import os
 import os.path
 import logging
 import argparse
-import monetdb.sql
+import pymonetdb.sql
 import csv
 
 def setup_logger(name='default', level=logging.INFO, stream=sys.stderr):

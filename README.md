@@ -1,5 +1,5 @@
 # mcsv
-Utility for exporting queries from MonetDB to CSV
+Utility for exporting query resultsets from MonetDB to CSV
 
 ## Installation
 1. Clone this repo or download as ZIP-archive

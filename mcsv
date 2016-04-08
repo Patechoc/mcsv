@@ -5,7 +5,7 @@ import os
 import os.path
 import logging
 import argparse
-import pymonetdb.sql
+import pymonetdb
 import csv
 
 def setup_logger(name='default', level=logging.INFO, stream=sys.stderr):
@@ -88,7 +88,7 @@ def main():
         opts['statement'] = read_statement()
 
     logger.info('connecting to database...')
-    cn = monetdb.sql.connect(username=opts['user'], password=opts['pass'], hostname=opts['host'], database=opts['db'], autocommit=False)
+    cn = pymonetdb.connect(username=opts['user'], password=opts['pass'], hostname=opts['host'], database=opts['db'], autocommit=False)
     cur = cn.cursor()
     logger.info('connect OK')
 

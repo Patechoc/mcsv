@@ -1,0 +1,136 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import os.path
+import logging
+import argparse
+import pymonetdb
+import csv
+import codecs
+import cStringIO
+
+class UnicodeWriter:
+    """
+    A CSV writer which will write rows to CSV file "f",
+    which is encoded in the given encoding.
+    """
+
+    def __init__(self, f, dialect=csv.excel, encoding="utf-8", **kwds):
+        # Redirect output to a queue
+        self.queue = cStringIO.StringIO()
+        self.writer = csv.writer(self.queue, dialect=dialect, **kwds)
+        self.stream = f
+        self.encoder = codecs.getincrementalencoder(encoding)()
+
+    def writerow(self, row):
+        self.writer.writerow([s.encode("utf-8") if isinstance(s,unicode) else str(s) for s in row])
+        # Fetch UTF-8 output from the queue ...
+        data = self.queue.getvalue()
+        data = data.decode("utf-8")
+        # ... and reencode it into the target encoding
+        data = self.encoder.encode(data)
+        # write to the target stream
+        self.stream.write(data)
+        # empty queue
+        self.queue.truncate(0)
+
+    def writerows(self, rows):
+        for row in rows:
+            self.writerow(row)
+
+def setup_logger(name='default', level=logging.INFO, stream=sys.stderr):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    log_handler = logging.StreamHandler(sys.stderr)
+    log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(log_handler)
+    return logger
+
+defopts = {
+    'user': 'monetdb',
+    'pass': 'monetdb',
+    'db':   'sys',
+    'host': 'localhost',
+    'port': 50000
+}
+
+def read_monetdb_cfg():
+    cfgopts = dict()
+    cfgpath = os.path.expanduser('~/.monetdb')
+    if os.access(cfgpath, os.R_OK):
+        with open(cfgpath) as cfgfile:
+            for line in cfgfile:
+                key, _, value = line.rstrip('\n').partition('=')
+                if key == 'user':
+                    cfgopts['user'] = value
+                elif key == 'password':
+                    cfgopts['pass'] = value
+    return cfgopts
+
+def get_cli_opts():
+    parser = argparse.ArgumentParser(description='Export query result from MonetDB to local CSV file.')
+    parser.add_argument('-s', '--statement', metavar='QUERY', help='Statement (query) which result should be exported to CSV. If omitted, query will be read from stdin.')
+    parser.add_argument('-o', '--out', '--output', metavar='OUTFILE', help='File for CSV output. Output file will be overwritten. If omitted, result will be written to stdout.')
+    parser.add_argument('-H', '--host', metavar='ADDRESS', help='Hostname to connect to.')
+    parser.add_argument('-p', '--port', metavar='PORT', help='Port to connect to.', type=int)
+    parser.add_argument('-d', '--db', '--database', metavar='DB', help='Database to connect to.')
+    parser.add_argument('-u', '--user', '--username', metavar='USER', help='Database user ID. If omitted, but specified in ~/.monetdb, then used value from file.')
+    parser.add_argument('-P', '--pass', '--password', metavar='PASS', help='User`s password. If omitted, but specified in ~/.monetdb, then used value from file.')
+    args = parser.parse_args()
+    return dict( (k,v) for k, v in vars(args).iteritems() if v is not None )
+
+def read_statement():
+    is_windows = sys.platform.startswith('win')
+    print >> sys.stderr, "Reading query from stdin. Type query and finish your input with EOF (%s one or more times)" % (('Ctrl+Z' if is_windows else 'Ctrl+D'),)
+    query = sys.stdin.read()
+    print >> sys.stderr, "\nQuery read OK."
+    return query
+
+def ResultIter(cursor, arraysize=1000):
+    'An iterator that uses fetchmany to keep memory usage down'
+    while True:
+        results = cursor.fetchmany(arraysize)
+        if not results:
+            break
+        for result in results:
+            yield result
+
+def main():
+    logger = setup_logger(os.path.basename(sys.argv[0]))
+    
+    cliopts = get_cli_opts()
+    cfgopts = read_monetdb_cfg()
+
+    opts = dict()
+    opts.update(defopts)
+    opts.update(cfgopts)
+    opts.update(cliopts)
+
+    logger.info('read options: %s',opts)
+
+    if 'out' in opts:
+        outfile = open(opts['out'], 'w')
+    else:
+        outfile = sys.stdout
+    writer = UnicodeWriter(outfile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
+
+    if 'statement' not in opts:
+        opts['statement'] = read_statement()
+
+    logger.info('connecting to database...')
+    cn = pymonetdb.connect(username=opts['user'], password=opts['pass'], hostname=opts['host'], database=opts['db'], autocommit=False)
+    cur = cn.cursor()
+    logger.info('connect OK')
+
+    cur.arraysize = 100
+    logger.info('starting query dump')
+    n = cur.execute(opts['statement'])
+    names = tuple( field[0] for field in cur.description )
+    writer.writerow(names)
+    for row in ResultIter(cur):
+        writer.writerow(row)
+    logger.info('query dump finisned')
+
+if __name__ == '__main__':
+    main()
